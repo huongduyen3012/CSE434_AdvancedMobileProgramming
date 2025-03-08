@@ -1,161 +1,64 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-shadow */
 import notifee, {EventType} from '@notifee/react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import firestore from '@react-native-firebase/firestore';
+import auth, {FirebaseAuthTypes} from '@react-native-firebase/auth';
 import messaging from '@react-native-firebase/messaging';
 import type {NavigationContainerRef} from '@react-navigation/native';
 import {NavigationContainer} from '@react-navigation/native';
 import {createStackNavigator} from '@react-navigation/stack';
-import {useEffect, useRef} from 'react';
+import {useEffect, useRef, useState} from 'react';
+import {View} from 'react-native';
+import {ActivityIndicator, Provider} from 'react-native-paper';
 import AddNoteScreen from './components/AddNote';
+import LoginScreen from './components/LoginScreen';
 import NotesListScreen from './components/NoteList';
+import {styles} from './components/styles';
 import {RootStackParamList} from './types';
+import {
+  createChannel,
+  registerDeviceToken,
+  requestUserPermission,
+  setupNotificationListener,
+} from './firebase/config';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import SignupScreen from './components/SignUpScreen';
 
-async function requestUserPermission() {
-  const authStatus = await messaging().requestPermission();
-  const enabled =
-    authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-    authStatus === messaging.AuthorizationStatus.PROVISIONAL;
-
-  if (enabled) {
-    console.log('Notification permission granted.');
-    await getToken();
-  } else {
-    console.log('Notification permission denied.');
+notifee.onBackgroundEvent(async ({type, detail}) => {
+  if (type === EventType.PRESS) {
+    console.log('🔔 Notification clicked in background:', detail.notification);
   }
-}
+});
 
-async function getToken() {
-  try {
-    const token = await messaging().getToken();
-    console.log('FCM Token:', token);
-
-    await AsyncStorage.setItem('deviceId', token);
-    return token;
-  } catch (error) {
-    console.error('Error getting FCM token:', error);
-    return null;
-  }
-}
-
-const setupNotificationListener = async () => {
-  try {
-    const myDeviceToken = await AsyncStorage.getItem('myDeviceToken');
-    if (!myDeviceToken) {
-      console.log('🚫 No device token found.');
-      return;
-    }
-
-    console.log('📡 Listening for notifications...', myDeviceToken);
-
-    // Get the last notification timestamp to avoid showing old notifications
-    const lastTimestamp = await AsyncStorage.getItem(
-      'lastNotificationTimestamp',
-    );
-    let query = firestore()
-      .collection('pendingNotifications')
-      .where('targetDevice', '==', myDeviceToken)
-      .orderBy('timestamp', 'desc');
-
-    // Only listen for new notifications if we have a timestamp
-    if (lastTimestamp) {
-      const date = new Date(parseInt(lastTimestamp, 10));
-      query = query.where('timestamp', '>', date);
-    }
-
-    return query.onSnapshot(async snapshot => {
-      console.log(`🔍 Firestore detected ${snapshot.docs.length} documents`);
-
-      for (const change of snapshot.docChanges()) {
-        if (change.type === 'added') {
-          const notification = change.doc.data();
-          console.log('📩 New notification received:', notification);
-
-          if (!notification.timestamp) {
-            console.log('⚠️ Notification has no timestamp, skipping');
-            continue;
-          }
-
-          // Check if this is actually a new notification
-          const notificationTime = notification.timestamp.toDate().getTime();
-          const lastProcessedTime = lastTimestamp
-            ? parseInt(lastTimestamp, 10)
-            : 0;
-
-          if (notificationTime > lastProcessedTime) {
-            await notifee.displayNotification({
-              title: notification.title,
-              body: notification.body,
-              data: {noteId: notification.noteId, type: 'NEW_NOTE'},
-              android: {
-                channelId: 'notes_channel',
-                pressAction: {id: 'default'},
-              },
-            });
-
-            await AsyncStorage.setItem(
-              'lastNotificationTimestamp',
-              notificationTime.toString(),
-            );
-          } else {
-            console.log('⚠️ Skipping old notification:', notification);
-          }
-        }
-      }
-    });
-  } catch (error) {
-    console.error('❌ Error setting up notification listener:', error);
-    return null;
-  }
-};
-
-const registerDeviceToken = async () => {
-  try {
-    const token = await messaging().getToken();
-
-    if (token) {
-      console.log('✅ Registering device token:', token);
-
-      await firestore().collection('deviceTokens').doc(token).set(
-        {
-          token,
-          timestamp: firestore.FieldValue.serverTimestamp(),
-        },
-        {merge: true},
-      );
-
-      await AsyncStorage.setItem('myDeviceToken', token);
-    } else {
-      console.log('❌ No FCM token received');
-    }
-  } catch (error) {
-    console.error('❌ Error getting FCM token:', error);
-  }
-};
-
-const createChannel = async () => {
-  const channel = await notifee.createChannel({
-    id: 'notes_channel',
-    name: 'Notes Notifications',
-    lights: false,
-    vibration: true,
-    importance: 4,
-  });
-  console.log('✅ Channel created:', channel);
-  return channel;
-};
 const Stack = createStackNavigator<RootStackParamList>();
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
+  const [loading, setLoading] = useState(true);
   const navigationRef =
     useRef<NavigationContainerRef<RootStackParamList>>(null);
 
   useEffect(() => {
-    requestUserPermission();
-    registerDeviceToken();
-    createChannel();
-    setupNotificationListener();
+    const unsubscribe = auth().onAuthStateChanged(async user => {
+      if (user) {
+        await AsyncStorage.setItem('userId', user.uid);
+        setUser(user);
+      } else {
+        await AsyncStorage.removeItem('userId');
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      requestUserPermission();
+      registerDeviceToken();
+      createChannel();
+      setupNotificationListener();
+    }
+  }, [user]);
 
   useEffect(() => {
     const unsubscribe = messaging().onMessage(async remoteMessage => {
@@ -190,15 +93,6 @@ export default function App() {
       }
     });
 
-    notifee.onBackgroundEvent(async ({type, detail}) => {
-      if (type === EventType.PRESS) {
-        console.log(
-          '🔔 Notification clicked in background:',
-          detail.notification,
-        );
-      }
-    });
-
     const checkInitialNotification = async () => {
       const initialNotification = await notifee.getInitialNotification();
 
@@ -217,20 +111,46 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#6200ea" />
+      </View>
+    );
+  }
   return (
-    <NavigationContainer ref={navigationRef}>
-      <Stack.Navigator>
-        <Stack.Screen
-          name="NotesList"
-          component={NotesListScreen}
-          options={{title: 'Notes'}}
-        />
-        <Stack.Screen
-          name="AddNote"
-          component={AddNoteScreen}
-          options={{title: 'Add Note'}}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <Provider>
+      <NavigationContainer ref={navigationRef}>
+        <Stack.Navigator>
+          {user ? (
+            <>
+              <Stack.Screen
+                name="NotesList"
+                component={NotesListScreen}
+                options={{title: 'Notes'}}
+              />
+              <Stack.Screen
+                name="AddNote"
+                component={AddNoteScreen}
+                options={{title: 'Add New Note'}}
+              />
+            </>
+          ) : (
+            <>
+              <Stack.Screen
+                name="Login"
+                component={LoginScreen}
+                options={{headerShown: false}}
+              />
+              <Stack.Screen
+                name="Signup"
+                component={SignupScreen}
+                options={{headerShown: false}}
+              />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+    </Provider>
   );
 }

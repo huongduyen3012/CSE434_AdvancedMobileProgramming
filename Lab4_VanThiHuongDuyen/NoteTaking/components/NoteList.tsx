@@ -1,11 +1,15 @@
+/* eslint-disable react/no-unstable-nested-components */
+/* eslint-disable react-native/no-inline-styles */
 /* eslint-disable react-hooks/exhaustive-deps */
-import {useEffect, useState} from 'react';
+import auth from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 import messaging from '@react-native-firebase/messaging';
+import {useEffect, useState} from 'react';
 import {Alert, FlatList, SafeAreaView, View} from 'react-native';
-import {Card, FAB, IconButton, Text} from 'react-native-paper';
-import {styles} from './styles';
+import {Card, Divider, IconButton, Menu, Text} from 'react-native-paper';
+import {getCurrentUser, signOut} from '../firebase/config';
 import {Note} from '../types';
+import {styles} from './styles';
 
 const NotesListScreen = ({navigation}: {navigation: any}) => {
   const pastelColors: string[] = [
@@ -16,12 +20,25 @@ const NotesListScreen = ({navigation}: {navigation: any}) => {
     '#FFE4E1',
   ];
   const [notes, setNotes] = useState<Note[]>([]);
+  const [menuVisible, setMenuVisible] = useState(false);
 
   useEffect(() => {
+    const user = getCurrentUser();
+    if (!user) {
+      return;
+    }
+
     const subscriber = firestore()
+      .collection('users')
+      .doc(user.uid)
       .collection('notes')
-      .orderBy('timestamp', 'asc')
+      .orderBy('timestamp', 'desc')
       .onSnapshot(querySnapshot => {
+        if (!querySnapshot || querySnapshot.empty) {
+          console.log('No notes found.');
+          setNotes([]);
+          return;
+        }
         const notesArray: Note[] = [];
         let index = 0;
         querySnapshot.forEach(documentSnapshot => {
@@ -38,6 +55,7 @@ const NotesListScreen = ({navigation}: {navigation: any}) => {
         console.log('Fetched notes:', notesArray);
         setNotes(notesArray);
       });
+
     return () => subscriber();
   }, []);
 
@@ -87,10 +105,48 @@ const NotesListScreen = ({navigation}: {navigation: any}) => {
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => firestore().collection('notes').doc(noteId).delete(),
+        onPress: () =>
+          firestore()
+            .collection('users')
+            .doc(auth().currentUser?.uid)
+            .collection('notes')
+            .doc(noteId)
+            .delete(),
       },
     ]);
   };
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={{flexDirection: 'row'}}>
+          <IconButton
+            icon="note-plus"
+            onPress={() => navigation.navigate('AddNote')}
+          />
+          <Menu
+            visible={menuVisible}
+            onDismiss={() => setMenuVisible(false)}
+            anchor={
+              <IconButton
+                icon="dots-vertical"
+                onPress={() => setMenuVisible(true)}
+              />
+            }>
+            <Menu.Item
+              onPress={() => {
+                setMenuVisible(false);
+                signOut();
+              }}
+              title="Logout"
+              leadingIcon="logout"
+            />
+            <Divider />
+          </Menu>
+        </View>
+      ),
+    });
+  }, [navigation, menuVisible]);
+
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
@@ -117,13 +173,13 @@ const NotesListScreen = ({navigation}: {navigation: any}) => {
         keyExtractor={item => item.id}
         contentContainerStyle={styles.listContent}
       />
-      <View style={styles.fabContainer}>
+      {/* <View style={styles.fabContainer}>
         <FAB
           icon="plus"
           style={styles.fab}
           onPress={() => navigation.navigate('AddNote')}
         />
-      </View>
+      </View> */}
     </SafeAreaView>
   );
 };

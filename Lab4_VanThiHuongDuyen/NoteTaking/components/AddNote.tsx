@@ -1,10 +1,9 @@
-import {useState} from 'react';
-import {Alert, View} from 'react-native';
-import {Button, Text, TextInput} from 'react-native-paper';
-import {styles} from './styles';
 import firestore from '@react-native-firebase/firestore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import notifee from '@notifee/react-native';
+import { useState } from 'react';
+import { Alert, View } from 'react-native';
+import { Button, TextInput } from 'react-native-paper';
+import { getCurrentUser } from '../firebase/config';
+import { styles } from './styles';
 
 const AddNoteScreen = ({navigation}: {navigation: any}) => {
   const [title, setTitle] = useState('');
@@ -19,44 +18,37 @@ const AddNoteScreen = ({navigation}: {navigation: any}) => {
 
     try {
       setIsSubmitting(true);
-      const myDeviceToken = await AsyncStorage.getItem('myDeviceToken');
+      const user = getCurrentUser();
+      if (!user) {
+        Alert.alert('Error', 'User not logged in');
+        return;
+      }
 
-      const noteRef = await firestore().collection('notes').add({
-        title,
-        content: note,
-        timestamp: firestore.FieldValue.serverTimestamp(),
-        createdBy: myDeviceToken,
-      });
+      const noteRef = await firestore()
+        .collection('users')
+        .doc(user.uid)
+        .collection('notes')
+        .add({
+          title,
+          content: note,
+          timestamp: firestore.FieldValue.serverTimestamp(),
+          userId: user.uid,
+        });
 
       console.log('✅ Note added with ID:', noteRef.id);
 
-      if (myDeviceToken) {
-        const notificationRef = firestore()
-          .collection('pendingNotifications')
-          .doc();
-
-        await notificationRef.set({
+      await firestore()
+        .collection('users')
+        .doc(user.uid)
+        .collection('pendingNotifications')
+        .add({
           title: 'New Note Added!',
-          body: `A new note titled "${title}" has been added.`,
+          body: `A new note titled "${title}" was added.`,
           noteId: noteRef.id,
+          userId: user.uid,
           timestamp: firestore.FieldValue.serverTimestamp(),
-          sourceDevice: myDeviceToken,
-          targetDevice: myDeviceToken,
         });
 
-        await notifee.displayNotification({
-          title: 'New Note Added!',
-          body: `A new note titled "${title}" has been added.`,
-          data: {
-            noteId: noteRef.id,
-            type: 'NEW_NOTE',
-          },
-          android: {
-            channelId: 'notes_channel',
-            pressAction: {id: 'default'},
-          },
-        });
-      }
       setTitle('');
       setNote('');
       // navigation.navigate('NotesList');
@@ -70,38 +62,44 @@ const AddNoteScreen = ({navigation}: {navigation: any}) => {
 
   return (
     <View style={styles.container}>
-      <Text variant="headlineSmall">Add New Note</Text>
-      <TextInput
-        label="Title"
-        value={title}
-        onChangeText={setTitle}
-        mode="outlined"
-        style={styles.input}
-      />
-      <TextInput
-        label="Note"
-        value={note}
-        onChangeText={setNote}
-        mode="outlined"
-        multiline
-        numberOfLines={4}
-        style={styles.noteInput}
-      />
+      <View style={styles.inputContainer}>
+        <TextInput
+          label="Title"
+          value={title}
+          onChangeText={setTitle}
+          mode="outlined"
+          style={styles.input}
+          placeholder="Enter title..."
+        />
+        <TextInput
+          label="Note"
+          value={note}
+          onChangeText={setNote}
+          mode="outlined"
+          multiline
+          numberOfLines={5}
+          style={styles.noteInput}
+          placeholder="Write your note here..."
+        />
+      </View>
+
       <View style={styles.buttonContainer}>
         <Button
           mode="outlined"
+          labelStyle={styles.cancelButtonLable}
           onPress={() => navigation.goBack()}
-          style={styles.button}
+          style={styles.cancelButton}
           disabled={isSubmitting}>
           Cancel
         </Button>
         <Button
           mode="contained"
+          labelStyle={styles.addButtonLabel}
           onPress={addNote}
-          style={styles.button}
+          style={styles.addButton}
           loading={isSubmitting}
           disabled={!title.trim() || !note.trim() || isSubmitting}>
-          Add Note
+          {isSubmitting ? 'Saving...' : 'Add Note'}
         </Button>
       </View>
     </View>

@@ -1,6 +1,5 @@
 import {Timestamp} from '@react-native-firebase/firestore';
 
-
 export type Note = {
   id: string;
   title: string;
@@ -12,4 +11,6 @@ export type Note = {
 export type RootStackParamList = {
   NotesList: undefined;
   AddNote: undefined;
+  Login: undefined;
+  Signup: undefined;
 };
